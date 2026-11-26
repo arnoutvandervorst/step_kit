@@ -32,9 +32,21 @@ class WizardState<K> {
   final Signal<WizardPhase> phase;
   final Signal<bool> busy = Signal(false, options: SignalOptions(name: 'WizardState.busy'));
 
+  /// When a step's [WizardStep.save] last succeeded in this visit; null
+  /// before. The app shows it ("draft saved at 10:21") so the person knows
+  /// they can stop and carry on later.
+  final Signal<DateTime?> lastSavedAt = Signal(null, options: SignalOptions(name: 'WizardState.lastSavedAt'));
+
+  /// Called with the done and skipped steps whenever either changes, for an
+  /// app that keeps them (skips are not in the answers, so without this a
+  /// skipped step shows as open again next time). Restore with [skipped].
+  final void Function(Set<K> done, Set<K> skipped)? onSettled;
+
+  final DateTime Function() _clock;
+
   final Signal<K?> _currentId;
   final Signal<Set<K>> _done;
-  final Signal<Set<K>> _skipped = Signal(const {}, options: SignalOptions(name: 'WizardState._skipped'));
+  late final Signal<Set<K>> _skipped;
 
   /// Set when a step was opened from the summary: leaving it forward goes
   /// back to the summary instead of to the next step.
@@ -66,20 +78,30 @@ class WizardState<K> {
 
   late final EffectCleanup _stepChangedEffect;
 
+  //* A save or completion often closes the wizard's screen, which disposes
+  //* this state while the call still runs: nothing may be written after.
+  bool _disposed = false;
+
   WizardState({
     required this.steps,
     this.hasOverview = false,
     this.hasSummary = false,
     this.onComplete,
     this.onStepChanged,
+    this.onSettled,
     K? startAt,
+    Set<K> skipped = const {},
+    DateTime Function()? clock,
   }) : assert(steps.isNotEmpty, 'A wizard needs at least one step'),
+       _clock = clock ?? DateTime.now,
        phase = Signal(WizardPhase.step, options: SignalOptions(name: 'WizardState.phase')),
        _currentId = Signal(null, options: SignalOptions(name: 'WizardState._currentId')),
        _done = Signal(
          {for (final step in steps) if (step.answered?.call() ?? false) step.id},
          options: SignalOptions(name: 'WizardState._done'),
        ) {
+    //* A restored skip stays a skip only while the step has no answer.
+    _skipped = Signal({for (final id in skipped) if (!_done.value.contains(id)) id}, options: SignalOptions(name: 'WizardState._skipped'));
     visibleSteps = computed(
       () => [for (final step in steps) if (step.visible?.call() ?? true) step],
       options: ComputedOptions(name: 'WizardState.visibleSteps'),
@@ -224,14 +246,16 @@ class WizardState<K> {
       try {
         ok = await save();
       } finally {
-        busy.value = false;
+        if (!_disposed) busy.value = false;
       }
-      if (!ok) return WizardMove.stayed;
+      if (!ok || _disposed) return WizardMove.stayed;
+      lastSavedAt.value = _clock();
     }
     batch(() {
       _done.value = {..._done.value, step.id};
       _skipped.value = {..._skipped.value}..remove(step.id);
     });
+    _report();
     return _advance();
   }
 
@@ -243,8 +267,11 @@ class WizardState<K> {
       _skipped.value = {..._skipped.value, step.id};
       _done.value = {..._done.value}..remove(step.id);
     });
+    _report();
     return _advance();
   }
+
+  void _report() => onSettled?.call({..._done.value}, {..._skipped.value});
 
   Future<WizardMove> _advance() async {
     if (_fromSummary.value && hasSummary) {
@@ -308,11 +335,12 @@ class WizardState<K> {
     try {
       return await run() ? WizardMove.completed : WizardMove.stayed;
     } finally {
-      busy.value = false;
+      if (!_disposed) busy.value = false;
     }
   }
 
   void dispose() {
+    _disposed = true;
     _stepChangedEffect();
     progress.dispose();
     canComplete.dispose();
@@ -323,6 +351,7 @@ class WizardState<K> {
     index.dispose();
     current.dispose();
     visibleSteps.dispose();
+    lastSavedAt.dispose();
     _fromSummary.dispose();
     _skipped.dispose();
     _done.dispose();

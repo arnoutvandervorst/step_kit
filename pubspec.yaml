@@ -1,6 +1,6 @@
 name: step_kit
 description: A wizard state machine for Flutter apps built on signals - steps, sections, skip, save per step, resume, overview and summary.
-version: 0.1.0
+version: 0.2.0
 publish_to: none
 
 environment:

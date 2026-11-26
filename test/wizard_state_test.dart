@@ -186,6 +186,33 @@ void main() {
       expect(t.busy.value, isFalse);
       t.dispose();
     });
+
+    test('a completion or save that closes the screen writes nothing after dispose', () async {
+      late final WizardState<S> w;
+      w = WizardState<S>(
+        steps: [WizardStep(id: S.a)],
+        onComplete: () async {
+          w.dispose();
+          return true;
+        },
+      );
+      expect(await w.next(), WizardMove.completed);
+
+      late final WizardState<S> saving;
+      saving = WizardState<S>(
+        steps: [
+          WizardStep(
+            id: S.a,
+            save: () async {
+              saving.dispose();
+              return true;
+            },
+          ),
+          WizardStep(id: S.b),
+        ],
+      );
+      expect(await saving.next(), WizardMove.stayed);
+    });
   });
 
   group('visibility', () {
@@ -208,6 +235,32 @@ void main() {
       expect(w.current.value!.id, S.c);
       w.dispose();
     });
+  });
+
+  test('a saved step stamps lastSavedAt; skips are reported and restored', () async {
+    final settled = <(Set<S>, Set<S>)>[];
+    final w = WizardState<S>(
+      steps: [WizardStep(id: S.a, save: () => true), WizardStep(id: S.b, optional: true), WizardStep(id: S.c)],
+      clock: () => DateTime(2026, 11, 26, 10, 21),
+      onSettled: (done, skipped) => settled.add((done, skipped)),
+    );
+    expect(w.lastSavedAt.value, isNull);
+    await w.next();
+    expect(w.lastSavedAt.value, DateTime(2026, 11, 26, 10, 21));
+    await w.skip();
+    expect(settled.last.$1, {S.a});
+    expect(settled.last.$2, {S.b});
+    w.dispose();
+
+    final again = WizardState<S>(
+      steps: [WizardStep(id: S.a, answered: () => true), WizardStep(id: S.b, optional: true), WizardStep(id: S.c)],
+      skipped: {S.b, S.a},
+      hasOverview: true,
+    );
+    expect(again.statusOf(S.b), WizardStepStatus.skipped);
+    expect(again.statusOf(S.a), WizardStepStatus.done, reason: 'an answer wins over a stored skip');
+    expect(again.firstOpen, S.c);
+    again.dispose();
   });
 
   test('onStepChanged fires for the first step and each later one, not on the overview', () async {
