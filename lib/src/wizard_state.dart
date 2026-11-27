@@ -149,7 +149,8 @@ class WizardState<K> {
       return settled.length / visible.length;
     }, options: ComputedOptions(name: 'WizardState.progress'));
 
-    final start = startAt ?? firstOpen ?? visibleSteps.value.first.id;
+    //* No visible step at all: no current step, and the wizard can only complete.
+    final start = startAt ?? firstOpen ?? visibleSteps.value.firstOrNull?.id;
     _currentId.value = start;
     if (startAt == null && hasOverview) phase.value = WizardPhase.overview;
 
@@ -218,7 +219,7 @@ class WizardState<K> {
   void begin() {
     batch(() {
       _fromSummary.value = false;
-      _currentId.value = firstOpen ?? visibleSteps.value.first.id;
+      _currentId.value = firstOpen ?? visibleSteps.value.firstOrNull?.id;
       phase.value = WizardPhase.step;
     });
   }
@@ -301,7 +302,7 @@ class WizardState<K> {
         return WizardMove.exit;
       case WizardPhase.summary:
         batch(() {
-          _currentId.value = visibleSteps.value.last.id;
+          _currentId.value = visibleSteps.value.lastOrNull?.id;
           phase.value = WizardPhase.step;
         });
         return WizardMove.moved;
